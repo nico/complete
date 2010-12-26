@@ -22,10 +22,17 @@ complete.Entry = function(data) {
  */
 complete.Entry.prototype.render = function(node, token) {
   var dom = goog.dom.getDomHelper(node);
-  var pathNode = dom.createDom("span", 'complete-ac-path');
-  dom.appendChild(pathNode, dom.createTextNode(this.data_.path));
 
+  var pathNode = dom.createDom('span', 'complete-ac-path');
+  dom.appendChild(pathNode, dom.createTextNode(this.data_.path));
   dom.appendChild(node, pathNode);
+
+  // TODO(thakis): Could be configurable; TextMate supports e.g. txmt://
+  var macvimNode = dom.createDom('a', 'complete-ac-mvim');
+  var url = 'mvim://open?url=file:///Users/thakis/src/chrome-git/src/';
+  macvimNode.setAttribute('href', url + this.data_.path);
+  dom.appendChild(macvimNode, dom.createTextNode('Open in MacVim'));
+  dom.appendChild(node, macvimNode);
 }
 
 /**
