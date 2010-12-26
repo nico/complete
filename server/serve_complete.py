@@ -14,10 +14,8 @@ def Score(filename, query):
 
   m = re.match(pattern, os.path.basename(filename))
   if m:
-    print pattern, m
     return 5
   return 0
-  #return len(filename)
 
 
 def GetResults(filenames, query):
