@@ -29,12 +29,23 @@ complete.Entry.prototype.render = function(node, token) {
 }
 
 /**
+ * @inheritdocs
+ * @override
+ */
+complete.Entry.prototype.toString = function(target) {
+  // Called to learn what to put into the input box if this is clicked.
+  return this.data_.path;
+}
+
+/**
  * Called by closure to if the item is selected by the user.
- * TODO(thakis): Figure out what the parameter means.
- * @param{Object} target
+ * @param{Element} target The input element the completion popup belongs to.
  */
 complete.Entry.prototype.select = function(target) {
-  console.log('select ' +' ' + target);
+  // Open the selected file at cs.chromium.org for now.
+  var url = 'http://codesearch.google.com/codesearch/p?#OAMlx_jo-ck/src/';
+  url += this.data_.path + '&exact_package=chromium';
+  window.location = url;
 }
 
 // FIXME(thakis): export
