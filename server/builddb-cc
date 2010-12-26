@@ -1,0 +1,133 @@
+#!/usr/bin/env python
+
+"""A CC replacement that forwards calls to a real CC after writing information
+about input and output files to a sqlite database. Also stores wall time of the
+real CC invocation.
+
+Use e.g. like this:
+  cd base
+  rm -rf ../clang && rm ../builddb.sqlite
+  xcodebuild \
+      OBJROOT=/Users/$USER/src/chrome-git/src/clang/obj \
+      DSTROOT=/Users/$USER/src/chrome-git/src/clang \
+      SYMROOT=/Users/$USER/src/chrome-git/src/clang \
+      CC=/Users/thakis/src/chrome-git/src/builddb-cc 
+
+Uses (some of them easily possible with the make build, but I'm stuck with
+xcodebuild):
+* Given a file, return the build command for that file
+* Find the 50 slowest build commands
+* Directory build-time treemap (maybe weighted by 1/#files_in_dir)
+
+Some of this can also be done by writing a custom gyp output generator, which
+might be cleaner, and which certainly is faster.
+"""
+
+import os
+import pipes
+import sqlite3
+import subprocess
+import sys
+import time
+
+
+# TODO(thakis): Make configurable
+CC = '/Users/thakis/src/llvm-svn/Release+Asserts/bin/clang++'
+DB = 'builddb.sqlite'  # Relative to source root.
+
+
+def GetSourceRoot():
+  # TODO(thakis): Could be smarter.
+  root = '/Users/thakis/src/chrome-git/src'
+  return os.path.realpath(root)
+
+
+def FindOutput(args):
+  for i, arg in enumerate(args):
+    if arg == '-o' and i + 1 < len(args):
+      return os.path.relpath(os.path.realpath(args[i + 1]), GetSourceRoot())
+  return None
+
+
+def FindInput(args, output):
+  if not output.endswith('.o'):
+    return None
+  output = os.path.basename(output)[:-2]  # strip '.o'
+  for i, arg in enumerate(args):
+    if arg.find(output) != -1:
+      if args[i - 1] == '-c':
+        return os.path.relpath(os.path.realpath(arg), GetSourceRoot())
+      elif os.path.splitext(arg)[1] in ['.c', '.cpp', '.cc', '.m', '.mm']:
+        return arg
+  return None
+
+
+def GetFileId(db, name):
+  db.execute('create table if not exists filenames(name, basename)')
+  db.execute(
+      'create index if not exists filename_name_idx on filenames(name)')
+  db.execute(
+      'create index if not exists filename_basename_idx on filenames(basename)')
+
+  cursor = db.execute('select rowid from filenames where name="%s"' % name)
+  result = cursor.fetchone()
+  if not result:
+    cursor = db.execute(
+        'insert into filenames (name, basename) values (?, ?)',
+        (name, os.path.basename(name)))
+    return cursor.lastrowid
+  else:
+    return result[0]
+
+
+def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
+  db.execute('''
+      create table if not exists gcc_build_commands(
+          filename_input_id integer,
+          cwd,
+          command,
+          output_file_name,
+          exit_code integer,
+          duration real)
+  ''')
+  # TODO(thakis): Make sure no row exists for this output file?
+  db.execute('''
+      insert into gcc_build_commands(
+          filename_input_id,
+          cwd,
+          command,
+          output_file_name,
+          exit_code,
+          duration)
+      values (?, ?, ?, ?, ?, ?)
+  ''', (in_file_id,
+        os.path.relpath(os.getcwd(), GetSourceRoot()),
+        ' '.join([pipes.quote(c) for c in cmd_list]),
+        cc_output,
+        exit_code,
+        duration
+       ))
+
+
+def LogInvocation(cmd_list, duration, exit_code):
+  cc_output = FindOutput(cmd_list)
+  cc_input = None
+  if cc_output:
+    cc_input = FindInput(cmd_list, cc_output)
+
+  with sqlite3.connect(os.path.join(GetSourceRoot(), DB)) as db:
+    file_id = 0
+    if cc_input:
+      file_id = GetFileId(db, cc_input)
+    LogInvocationToDb(db, cmd_list, duration, exit_code, file_id, cc_output)
+
+
+if __name__ == '__main__':
+  # TODO(thakis): Maybe store svn rev in DB and error out if current revision
+  #               doesn't match db revision.
+  command = [CC] + sys.argv[1:]
+  time_start = time.time()
+  exit_code = subprocess.call(command)
+  time_end = time.time()
+  LogInvocation(command, time_end - time_start, exit_code)
+  sys.exit(exit_code)
