@@ -21,7 +21,7 @@ def Score(filename, query):
 def GetResults(filenames, query):
   scored = [(Score(f, query), f) for f in filenames]
   scored.sort(reverse=True)
-  return [f for s, f in scored[0:20]]
+  return [{ 'path': f } for s, f in scored[0:20]]
 
 
 def serve_search(environ, start_response):
@@ -29,8 +29,17 @@ def serve_search(environ, start_response):
   #               etc)
 
   global filenames
-  # TODO(thakis): Return list of 20 most recently used files
-  results = ['no', 'input', 'yet']
+  # The closure rich text remote autocomplete control gets data in a whacky
+  # format.
+  results = [
+    ['filenames', {
+       'path': 'no',
+     }, {
+       'path': 'input',
+     }, {
+       'path': 'yet',
+     }],
+  ]
   if 'QUERY_STRING' in environ:
     query_dict = cgi.parse_qs(environ['QUERY_STRING'])
     if 'token' in query_dict:
@@ -38,7 +47,7 @@ def serve_search(environ, start_response):
       # several times (e.g. 'q=ddsview&q=makeicns'). Ignore all but the first
       # occurence of token.
       query = query_dict['token'][0]
-      results = GetResults(filenames, query)
+      results = [ ['filenames'] + GetResults(filenames, query) ]
 
   start_response('200 OK',
                 [('Content-type','application/json'),
