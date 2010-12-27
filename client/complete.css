@@ -22,5 +22,6 @@
 }
 
 .complete-ac-mvim {
-  float: right;
+  position:absolute;
+  right:5px;
 }

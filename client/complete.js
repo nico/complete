@@ -40,7 +40,8 @@ complete.Entry.prototype.render = function(node, token) {
  * @override
  */
 complete.Entry.prototype.toString = function(target) {
-  // Called to learn what to put into the input box if this is clicked.
+  // Called to learn what to put into the input box if this is clicked. Called
+  // right before |select()|.
   return this.data_.path;
 }
 
