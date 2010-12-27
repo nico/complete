@@ -3,13 +3,18 @@ goog.provide('complete')
 goog.require('goog.dom');
 goog.require('goog.ui.AutoComplete.RichRemote');
 
+
+/** @typedef {{path: string, path_highlight_ranges: Array.<Array.<number>>}} */
+complete.JsonData;
+
+
 /**
- * @param{Object} data
+ * @param{complete.JsonData} data
  * @constructor
  */
 complete.Entry = function(data) {
   /**
-   * @type {Object}
+   * @type {complete.JsonData}
    * @private
    */
   this.data_ = data;
@@ -23,14 +28,16 @@ complete.Entry = function(data) {
 complete.Entry.prototype.render = function(node, token) {
   var dom = goog.dom.getDomHelper(node);
 
-  var path = this.data_.path;
+  // Use ["path"] instead of .path to prevent the compiler from renaming this.
+  var path = this.data_["path"];
+  var pathranges = this.data_["path_highlight_ranges"];
 
   // Create highlighted span. Assume that the ranges are sorted and
   // non-overlapping. TODO(thakis): This block of code is ridiculously long.
   var nodes = [];
   var textIndex = 0;
-  for (var i = 0; i < this.data_.path_highlight_ranges.length; ++i) {
-    var range = this.data_.path_highlight_ranges[i];
+  for (var i = 0; i < pathranges.length; ++i) {
+    var range = pathranges[i];
     var from = range[0];
     var to = range[1];
     if (textIndex < from)
@@ -57,8 +64,7 @@ complete.Entry.prototype.render = function(node, token) {
 }
 
 /**
- * @inheritdocs
- * @override
+ * @inheritDoc
  */
 complete.Entry.prototype.toString = function(target) {
   // Called to learn what to put into the input box if this is clicked. Called
@@ -79,9 +85,10 @@ complete.Entry.prototype.select = function(target) {
 
 // FIXME(thakis): export
 /**
- * @param{Object} item
+ * @param{complete.JsonData} item
+ * @return {complete.Entry}
  */
-filenames = function(item) {
+var filenames = function(item) {
   return new complete.Entry(item);
 }
 
@@ -105,4 +112,4 @@ complete.setUp = function() {
 
 complete.setUp();
 
-goog.exportSymbol('complete.setUp', complete.setUp);
+goog.exportSymbol('filenames', filenames);
