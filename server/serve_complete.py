@@ -21,7 +21,10 @@ def Score(filename, query):
 def GetResults(filenames, query):
   scored = [(Score(f, query), f) for f in filenames]
   scored.sort(reverse=True)
-  return [{ 'path': f } for s, f in scored[0:20]]
+  return [{
+    'path': f,
+    'path_highlight_ranges': [ [0, 1], [3, 4], ],
+  } for s, f in scored[0:20]]
 
 
 def serve_search(environ, start_response):
@@ -36,6 +39,7 @@ def serve_search(environ, start_response):
        'path': 'no',
      }, {
        'path': 'input',
+       'path_highlight_ranges': [[0, 1], [3, 4]],
      }, {
        'path': 'yet',
      }],

@@ -23,14 +23,35 @@ complete.Entry = function(data) {
 complete.Entry.prototype.render = function(node, token) {
   var dom = goog.dom.getDomHelper(node);
 
-  var pathNode = dom.createDom('span', 'complete-ac-path');
-  dom.appendChild(pathNode, dom.createTextNode(this.data_.path));
+  var path = this.data_.path;
+
+  // Create highlighted span. Assume that the ranges are sorted and
+  // non-overlapping. TODO(thakis): This block of code is ridiculously long.
+  var nodes = [];
+  var textIndex = 0;
+  for (var i = 0; i < this.data_.path_highlight_ranges.length; ++i) {
+    var range = this.data_.path_highlight_ranges[i];
+    var from = range[0];
+    var to = range[1];
+    if (textIndex < from)
+      nodes.push(dom.createTextNode(path.substring(textIndex, from)));
+
+    var span = dom.createDom('span', 'ac-highlighted');
+    dom.appendChild(span, dom.createTextNode(path.substring(from, to + 1)));
+    nodes.push(span);
+    textIndex = to + 1;
+  }
+  if (textIndex < path.length)
+    nodes.push(dom.createTextNode(path.substring(textIndex, path.length)));
+
+  // Add highlighted fragment into a span.
+  var pathNode = dom.createDom('span', 'complete-ac-path', nodes);
   dom.appendChild(node, pathNode);
 
   // TODO(thakis): Could be configurable; TextMate supports e.g. txmt://
   var macvimNode = dom.createDom('a', 'complete-ac-mvim');
   var url = 'mvim://open?url=file:///Users/thakis/src/chrome-git/src/';
-  macvimNode.setAttribute('href', url + this.data_.path);
+  macvimNode.setAttribute('href', url + path);
   dom.appendChild(macvimNode, dom.createTextNode('Open in MacVim'));
   dom.appendChild(node, macvimNode);
 }
