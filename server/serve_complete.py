@@ -67,7 +67,7 @@ def GetResults(filenames, query):
   return [{
     'path': f,
     'path_highlight_ranges': s[1],
-  } for s, f in scored[0:20]]
+  } for s, f in scored[0:20] if s[0] > 0]
 
 
 def serve_search(environ, start_response):
