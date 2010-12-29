@@ -19,6 +19,11 @@ def GroupsToRanges(m):
   return result
 
 
+def IsBeginning(index, s):
+  """Assumes that index is a valid index into s."""
+  return (index > 0 and s[index - 1] in ['_', '/']) or s[index].isupper()
+
+
 def Score(filename, query):
   pattern = ''
   for q in query:
@@ -29,7 +34,24 @@ def Score(filename, query):
   m = re.match(pattern, os.path.basename(filename))
   if m:
     offset = len(os.path.dirname(filename)) + 1
-    return 5, [[b + offset, e + offset] for b, e in GroupsToRanges(m)]
+    ranges = [[b + offset, e + offset] for b, e in GroupsToRanges(m)]
+
+    # Default score for matching at all.
+    score = 5
+
+    for r in ranges:
+      # Bonus points for every match that starts at the "beginning" of a word.
+      # (beginning is after /, after _, and at capital letters).
+      if IsBeginning(r[0], filename):
+        score += 10
+
+      # Also bonus points for consecutive matches
+      score += (r[1] - r[0]) * 11
+
+    # Penalize _test files by giving a small bonus to shorter paths.
+    score += 1.0 / len(filename)
+
+    return score, ranges
   return 0, []
 
 
