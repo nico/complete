@@ -27,7 +27,8 @@ def IsBeginning(index, s):
 def Score(filename, query):
   pattern = ''
   for q in query:
-    pattern += '(%s).*' % q  # FIXME(thakis): regex-escape q?
+    # Non-greedy so that '.m' matches the consecutive '.m' in '.mm'.
+    pattern += '(%s).*?' % re.escape(q)
 
   # FIXME(thakis): maybe don't use basename. also, probably search() instead of
   # match().
