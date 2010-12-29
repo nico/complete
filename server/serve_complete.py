@@ -31,7 +31,7 @@ def Score(filename, query):
 
   # FIXME(thakis): maybe don't use basename. also, probably search() instead of
   # match().
-  m = re.match(pattern, os.path.basename(filename))
+  m = re.match(pattern, os.path.basename(filename), re.IGNORECASE)
   if m:
     offset = len(os.path.dirname(filename)) + 1
     ranges = [[b + offset, e + offset] for b, e in GroupsToRanges(m)]
