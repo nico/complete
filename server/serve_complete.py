@@ -25,6 +25,9 @@ def IsBeginning(index, s):
 
 
 def Score(filename, query):
+  # TODO(thakis): After playing with this for a while, it seems as if query
+  # characters that don't match at the beginning of a word or right-adjacent to
+  # an existing match are less useful.
   pattern = ''
   for q in query:
     # Non-greedy so that '.m' matches the consecutive '.m' in '.mm'.

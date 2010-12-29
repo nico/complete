@@ -30,6 +30,11 @@
   width:700px;
   margin:100px auto;
 }
+
+.container > p {
+  text-align: center;
+}
+
 input {
   width:700px;
 }
