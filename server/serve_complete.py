@@ -7,23 +7,40 @@ import sqlite3
 
 DB = '/Users/thakis/src/chrome-git/src/builddb.sqlite'
 
+
+def GroupsToRanges(m):
+  result = []
+  for i in xrange(1, 1 + len(m.groups())):
+    b, e = m.span(i)
+    if result and result[-1][1] + 1 == b:
+      result[-1][1] = e - 1
+    else:
+      result.append([b, e - 1])
+  return result
+
+
 def Score(filename, query):
   pattern = ''
   for q in query:
-    pattern += q + '.*'
+    pattern += '(%s).*' % q  # FIXME(thakis): regex-escape q?
 
+  # FIXME(thakis): maybe don't use basename. also, probably search() instead of
+  # match().
   m = re.match(pattern, os.path.basename(filename))
   if m:
-    return 5
-  return 0
+    offset = len(os.path.dirname(filename)) + 1
+    return 5, [[b + offset, e + offset] for b, e in GroupsToRanges(m)]
+  return 0, []
 
 
 def GetResults(filenames, query):
+  # This is optimized for hackability, not performance. Could be k log n instead
+  # of n, and the complexity in |len(query)| could probably be improved as well.
   scored = [(Score(f, query), f) for f in filenames]
   scored.sort(reverse=True)
   return [{
     'path': f,
-    'path_highlight_ranges': [ [0, 1], [3, 4], ],
+    'path_highlight_ranges': s[1],
   } for s, f in scored[0:20]]
 
 
