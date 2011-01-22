@@ -5,7 +5,13 @@ g++ -c complete_plugin.cc \
     -I/Users/thakis/src/llvm-svn/tools/clang/include
 
 g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
-    complete_plugin.o -o libcomplete_plugin.dylib
+    -lsqlite3 complete_plugin.o -o libcomplete_plugin.dylib
+
+~/src/llvm-svn/Release+Asserts/bin/clang++ -c complete_plugin.cc\
+    `~/src/llvm-svn/Release+Asserts/bin/llvm-config --cxxflags` \
+    -I/Users/thakis/src/llvm-svn/tools/clang/include \
+    -Xclang -load -Xclang libcomplete_plugin.dylib \
+    -Xclang -add-plugin -Xclang complete
 
 */
 #include "clang/Frontend/FrontendPluginRegistry.h"
@@ -16,12 +22,41 @@ g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
 #include "clang/Frontend/CompilerInstance.h"
 using namespace clang;
 
+#include "sqlite3.h"
+
+// TODO(thakis): Less hardcoded.
+const char kDbPath[] = "/Users/thakis/src/chrome-git/src/builddb.sqlite";
+
+
+class StupidDatabase {
+public:
+  StupidDatabase() : db_(NULL) {}
+  ~StupidDatabase() { close(); }
+
+  bool open(const std::string& file) {
+    assert(!db_);
+    int err = sqlite3_open(file.c_str(), &db_);
+    return err == SQLITE_OK;
+  }
+
+  void close() {
+    if (db_)
+      sqlite3_close(db_);
+    db_ = NULL;
+  }
+private:
+  sqlite3* db_;
+};
+
 
 class CompletePlugin : public ASTConsumer {
 public:
   CompletePlugin(CompilerInstance& instance)
       : instance_(instance),
         d_(instance.getDiagnostics()) {
+    // FIXME: Emit diag instead?
+    if (!db_.open(kDbPath))
+      fprintf(stderr, "Failed to open db\n");
   }
 
   virtual void HandleTagDeclDefinition(TagDecl* tag) {
@@ -37,6 +72,7 @@ public:
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
+  StupidDatabase db_;
 };
 
 
