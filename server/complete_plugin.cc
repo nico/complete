@@ -59,21 +59,40 @@ public:
       fprintf(stderr, "Failed to open db\n");
   }
 
-  virtual void HandleTagDeclDefinition(TagDecl* tag) {
-    if (CXXRecordDecl* record = dyn_cast<CXXRecordDecl>(tag)) {
-      SourceLocation record_location = record->getInnerLocStart();
-      record->getIdentifier();
-    }
-  }
-
-  virtual void HandleTopLevelDecl(DeclGroupRef D) {
-  }
+  virtual void HandleTopLevelDecl(DeclGroupRef D);
 
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
   StupidDatabase db_;
 };
+
+void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
+  for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
+    if (NamedDecl* record = dyn_cast<NamedDecl>(*I)) {
+      SourceLocation record_location = record->getLocStart();
+      SourceManager& source_manager = instance_.getSourceManager();
+
+      record_location = source_manager.getInstantiationLoc(record_location);
+
+      // Ignore built-ins.
+      if (record_location.isInvalid()) return;
+
+      // Ignore stuff from system headers.
+      if (source_manager.isInSystemHeader(record_location)) return;
+
+      // Ignore everything not in the main file.
+      if (!source_manager.isFromMainFile(record_location)) return;
+
+      //std::string identifier = record->getIdentifier();
+      std::string identifier = record->getNameAsString();
+      fprintf(stderr, "%s:%u Identifier: %s\n",
+          source_manager.getBufferName(record_location),
+          source_manager.getInstantiationLineNumber(record_location),
+          identifier.c_str());
+    }
+  }
+}
 
 
 class CompletePluginAction : public PluginASTAction {
