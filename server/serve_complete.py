@@ -33,8 +33,11 @@ def Score(filename, query):
     # Non-greedy so that '.m' matches the consecutive '.m' in '.mm'.
     pattern += '(%s).*?' % re.escape(q)
 
-  # FIXME(thakis): maybe don't use basename. also, probably search() instead of
-  # match().
+  # FIXME: "sptr" should match "scoped_ptr" like "[s]coped_[ptr}". Currently, it
+  #        matches like "[s]co[p]ed_p[tr]"
+
+  # FIXME(thakis): maybe don't use just basename. also, probably search()
+  # instead of match(). Both seems to work reasonably well in practice though.
   m = re.match(pattern, os.path.basename(filename), re.IGNORECASE)
   if m:
     offset = len(os.path.dirname(filename)) + 1
