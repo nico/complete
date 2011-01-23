@@ -13,6 +13,8 @@ g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
     -Xclang -load -Xclang libcomplete_plugin.dylib \
     -Xclang -add-plugin -Xclang complete
 
+The database is meant to be converted into this format later on:
+http://ctags.sourceforge.net/FORMAT
 */
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
@@ -25,7 +27,8 @@ using namespace clang;
 #include "sqlite3.h"
 
 // TODO(thakis): Less hardcoded.
-const char kDbPath[] = "/Users/thakis/src/chrome-git/src/builddb.sqlite";
+//const char kDbPath[] = "/Users/thakis/src/chrome-git/src/builddb.sqlite";
+const char kDbPath[] = "builddb.sqlite";
 
 
 class StupidDatabase {
@@ -39,13 +42,81 @@ public:
     return err == SQLITE_OK;
   }
 
+  bool exec(const std::string& query) {
+    if (!db_)
+      return false;
+    return sqlite3_exec(db_, query.c_str(), NULL, NULL, NULL) == SQLITE_OK;
+  }
+
   void close() {
     if (db_)
       sqlite3_close(db_);
     db_ = NULL;
   }
+
+  sqlite3* db() { return db_; }
 private:
   sqlite3* db_;
+};
+
+
+class CompletePluginDB {
+public:
+  bool open(const std::string& file) {
+    return db_.open(file);
+  }
+
+  int getFileId(const std::string& file) {
+    db_.exec("create table if not exists filenames(name, basename)");
+    db_.exec(
+        "create index if not exists filename_name_idx on filenames(name)");
+    db_.exec(
+        "create index if not exists filename_basename_idx "
+        "on filenames(basename)");
+
+    // FIXME: move sqlite-specific stuff into StupidDatabase
+    const char query[] = "select rowid from filenames where name=?"; // % name)
+    sqlite3_stmt* query_stmt = NULL;
+    if (sqlite3_prepare_v2(
+          db_.db(), query, -1, &query_stmt, NULL) != SQLITE_OK) {
+      return -1;
+    }
+    sqlite3_bind_text(query_stmt, 1, file.c_str(), -1, SQLITE_TRANSIENT);
+
+    int rowid = -1;
+    int code = sqlite3_step(query_stmt);
+    if (code == SQLITE_ROW) {  // FIXME: retry on error etc
+      rowid = sqlite3_column_int(query_stmt, 0);
+    } else if (code == SQLITE_DONE) {
+      const char insert[] =
+          "insert into filenames (name, basename) values (?, ?)"; // % name)
+      sqlite3_stmt* insert_stmt = NULL;
+      if (sqlite3_prepare_v2(
+            db_.db(), insert, -1, &insert_stmt, NULL) != SQLITE_OK) {
+        // FIXME: leaks
+        return -1;
+      }
+      sqlite3_bind_text(insert_stmt, 1, file.c_str(), -1, SQLITE_TRANSIENT);
+      sqlite3_bind_text(insert_stmt, 2, "todo", -1, SQLITE_TRANSIENT);
+
+      int code = sqlite3_step(insert_stmt);
+      if (code == SQLITE_DONE) {  // FIXME: retry on error etc
+        rowid = sqlite3_last_insert_rowid(db_.db());
+      } else {
+        fprintf(stderr, "insert error %d\n", code);
+      }
+      sqlite3_finalize(insert_stmt);
+    } else {
+      fprintf(stderr, "query error %d\n", code);
+    }
+
+    sqlite3_finalize(query_stmt);
+
+    return rowid;
+  }
+
+private:
+  StupidDatabase db_;
 };
 
 
@@ -64,7 +135,7 @@ public:
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
-  StupidDatabase db_;
+  CompletePluginDB db_;
 };
 
 void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
@@ -82,12 +153,15 @@ void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
       if (source_manager.isInSystemHeader(record_location)) return;
 
       // Ignore everything not in the main file.
-      if (!source_manager.isFromMainFile(record_location)) return;
+      //if (!source_manager.isFromMainFile(record_location)) return;
 
       //std::string identifier = record->getIdentifier();
       std::string identifier = record->getNameAsString();
-      fprintf(stderr, "%s:%u Identifier: %s\n",
-          source_manager.getBufferName(record_location),
+      std::string filename = source_manager.getBufferName(record_location);
+      int fileId = db_.getFileId(filename);
+      fprintf(stderr, "%d %s:%u Identifier: %s\n",
+          fileId,
+          filename.c_str(),
           source_manager.getInstantiationLineNumber(record_location),
           identifier.c_str());
     }
