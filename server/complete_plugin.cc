@@ -36,20 +36,39 @@ using namespace clang;
 
 #include "sqlite3.h"
 
+
 // TODO(thakis): Less hardcoded.
 const char kDbPath[] = "/Users/thakis/builddb.sqlite";
 //const char kDbPath[] = "builddb.sqlite";
 
 
-class StupidDatabase {
+class CompletePluginDB {
 public:
-  StupidDatabase() : db_(NULL) {}
-  ~StupidDatabase() { close(); }
+  CompletePluginDB() : db_(NULL) {}
+  ~CompletePluginDB() { close(); }
 
   bool open(const std::string& file) {
     assert(!db_);
     int err = sqlite3_open(file.c_str(), &db_);
-    return err == SQLITE_OK;
+    bool success = err == SQLITE_OK;
+    if (success) {
+      // Sleep up to 1200 seconds / 20 minutes on busy.
+      sqlite3_busy_timeout(db_, 100000);
+
+      // Putting everything in one transaction is the biggest win. With
+      // all these settings, run time goes from 14.4s to 1.9s (compared to
+      // 1.6s when running without the plugin).
+      exec("pragma synchronous = off");  // 14.4s -> 7.6s
+      exec("pragma journal_mode = memory");  // 14.4s -> 6.6s
+      //exec("pragma journal_mode = off");  // about the same as "memory"
+
+      prepareTables();
+
+      // Everything in 1 transaction: 14.4s -> 2.6s
+      // Make sure only one process accesses the db at a time.
+      exec("begin exclusive transaction");
+    }
+    return success;
   }
 
   bool exec(const std::string& query) {
@@ -59,54 +78,22 @@ public:
   }
 
   void close() {
-    if (db_)
+    if (db_) {
+      exec("end transaction");
       sqlite3_close(db_);
+    }
     db_ = NULL;
   }
 
-  sqlite3* db() { return db_; }
-private:
-  sqlite3* db_;
-};
-
-
-class CompletePluginDB {
-public:
-  bool open(const std::string& file) {
-    bool success = db_.open(file);
-    if (success) {
-      // Sleep up to 1200 seconds / 20 minutes on busy.
-      sqlite3_busy_timeout(db_.db(), 100000);
-
-      // Putting everything in one transaction is the biggest win. With
-      // all these settings, run time goes from 14.4s to 1.9s (compared to
-      // 1.6s when running without the plugin).
-      db_.exec("pragma synchronous = off");  // 14.4s -> 7.6s
-      db_.exec("pragma journal_mode = memory");  // 14.4s -> 6.6s
-      //db_.exec("pragma journal_mode = off");  // about the same as "memory"
-
-      prepareTables();
-
-      // Everything in 1 transaction: 14.4s -> 2.6s
-      // Make sure only one process accesses the db at a time.
-      db_.exec("begin exclusive transaction");
-    }
-    return success;
-  }
-
-  void flush() {
-    db_.exec("end transaction");
-  }
-
   void prepareTables() {
-    db_.exec("create table if not exists filenames(name, basename)");
-    db_.exec(
+    exec("create table if not exists filenames(name, basename)");
+    exec(
         "create index if not exists filename_name_idx on filenames(name)");
-    db_.exec(
+    exec(
         "create index if not exists filename_basename_idx "
         "on filenames(basename)");
 
-    db_.exec(
+    exec(
         "create table if not exists symbols "
         "    (fileid integer, linenr integer, symbol, kind, "
         "     primary key(fileid, linenr, symbol))");
@@ -130,7 +117,7 @@ public:
     const char query[] = "select rowid from filenames where name=?";
     sqlite3_stmt* query_stmt = NULL;
     if (sqlite3_prepare_v2(
-          db_.db(), query, -1, &query_stmt, NULL) != SQLITE_OK) {
+          db_, query, -1, &query_stmt, NULL) != SQLITE_OK) {
       return -1;
     }
     sqlite3_bind_text(query_stmt, 1, abspath, -1, SQLITE_TRANSIENT);
@@ -143,11 +130,11 @@ public:
       char* zSQL = sqlite3_mprintf(
           "insert into filenames (name, basename) values (%Q, %Q)",
           abspath, "todo");
-      bool success = db_.exec(zSQL);
+      bool success = exec(zSQL);
       sqlite3_free(zSQL);
 
       if (success)  // FIXME: retry on error etc
-        rowid = sqlite3_last_insert_rowid(db_.db());
+        rowid = sqlite3_last_insert_rowid(db_);
       else
         fprintf(stderr, "insert error\n");
     } else {
@@ -171,12 +158,12 @@ public:
         "insert or replace into symbols (fileid, linenr, symbol, kind) "
         "                        values (%d, %d, %Q, '%c')",
         fileId, lineNr, symbol.c_str(), kind);
-    db_.exec(zSQL);
+    exec(zSQL);
     sqlite3_free(zSQL);
   }
 
 private:
-  StupidDatabase db_;
+  sqlite3* db_;
   std::string lastFile_;
   int lastFileId_;
 };
@@ -231,7 +218,7 @@ void CompletePlugin::HandleTranslationUnit(ASTContext &Ctx) {
       HandleDecl(*I, db_);
     }
   }
-  db_.flush();
+  db_.close();
 }
 
 void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
