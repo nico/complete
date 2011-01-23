@@ -108,15 +108,17 @@ public:
   }
 
   // TODO: kind, maybe function arity,
-  // maybe one of class/enum/function/struct/union, maybe file
+  // maybe one of class/enum/function/struct/union, maybe file,
+  // maybe isDefinition
   void putSymbol(int fileId, int lineNr, const std::string& symbol) {
     db_.exec(
         "create table if not exists symbols "
-        "    (fileid integer, linenr integer, symbol)");
+        "    (fileid integer, linenr integer, symbol, "
+        "     primary key(fileid, linenr, symbol))");
 
-    // TODO: Don't insert a symbol/file/linenr combination more than once
     char* zSQL = sqlite3_mprintf(
-        "insert into symbols (fileid, linenr, symbol) values (%d, %d, %Q)",
+        "insert or replace into symbols (fileid, linenr, symbol) "
+        "                        values (%d, %d, %Q)",
         fileId, lineNr, symbol.c_str());
     db_.exec(zSQL);
     sqlite3_free(zSQL);
