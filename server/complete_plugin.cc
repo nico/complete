@@ -16,11 +16,13 @@ g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
 The database is meant to be converted into this format later on:
 http://ctags.sourceforge.net/FORMAT
 
-  select symbol, name, linenr \
-  from symbols join filenames on symbols.fileid = filenames.rowid \
+  select symbol, name, linenr
+  from symbols join filenames on symbols.fileid = filenames.rowid
   where symbol = 'begin';
 
 */
+#include <string>
+
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/AST.h"
@@ -68,16 +70,43 @@ private:
 class CompletePluginDB {
 public:
   bool open(const std::string& file) {
-    return db_.open(file);
+    bool success = db_.open(file);
+    if (success) {
+      // Putting everything in one transaction is the biggest win. With
+      // all these settings, run time goes from 14.4s to 1.9s (compared to
+      // 1.6s when running without the plugin).
+      db_.exec("pragma synchronous = off");  // 14.4s -> 7.6s
+      db_.exec("pragma journal_mode = memory");  // 14.4s -> 6.6s
+      //db_.exec("pragma journal_mode = off");  // about the same as "memory"
+
+      prepareTables();
+
+      // Everything in 1 transaction: 14.4s -> 2.6s
+      db_.exec("begin transaction");
+    }
+    return success;
   }
 
-  int getFileId(const std::string& file) {
+  void flush() {
+    db_.exec("end transaction");
+  }
+
+  void prepareTables() {
     db_.exec("create table if not exists filenames(name, basename)");
     db_.exec(
         "create index if not exists filename_name_idx on filenames(name)");
     db_.exec(
         "create index if not exists filename_basename_idx "
         "on filenames(basename)");
+
+    db_.exec(
+        "create table if not exists symbols "
+        "    (fileid integer, linenr integer, symbol, "
+        "     primary key(fileid, linenr, symbol))");
+  }
+
+  int getFileId(const std::string& file) {
+    if (file == lastFile_) return lastFileId_;
 
     // FIXME: move sqlite-specific stuff into StupidDatabase
     const char query[] = "select rowid from filenames where name=?";
@@ -109,6 +138,8 @@ public:
 
     sqlite3_finalize(query_stmt);
 
+    lastFile_ = file;
+    lastFileId_ = rowid;
     return rowid;
   }
 
@@ -117,10 +148,6 @@ public:
   // maybe isDefinition,
   // v2: referencing places (requires "linking")
   void putSymbol(int fileId, int lineNr, const std::string& symbol) {
-    db_.exec(
-        "create table if not exists symbols "
-        "    (fileid integer, linenr integer, symbol, "
-        "     primary key(fileid, linenr, symbol))");
 
     char* zSQL = sqlite3_mprintf(
         "insert or replace into symbols (fileid, linenr, symbol) "
@@ -132,6 +159,8 @@ public:
 
 private:
   StupidDatabase db_;
+  std::string lastFile_;
+  int lastFileId_;
 };
 
 
@@ -145,7 +174,11 @@ public:
       fprintf(stderr, "Failed to open db\n");
   }
 
+  virtual void HandleTagDeclDefinition(TagDecl *D);
   virtual void HandleTopLevelDecl(DeclGroupRef D);
+  virtual void HandleTranslationUnit(ASTContext &Ctx) {
+    db_.flush();
+  }
 
   void HandleDecl(Decl* decl);
 
@@ -155,23 +188,46 @@ private:
   CompletePluginDB db_;
 };
 
+static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
+  SourceLocation loc = decl->getLocStart();
+  SourceManager& source_manager = instance.getSourceManager();
+  loc = source_manager.getInstantiationLoc(loc);
+
+  // Ignore built-ins.
+  if (loc.isInvalid()) return true;
+
+  // Ignore stuff from system headers.
+  if (source_manager.isInSystemHeader(loc)) return true;
+
+  // Ignore everything not in the main file.
+  //if (!source_manager.isFromMainFile(loc)) return true;
+
+  // Doesn't actually save run time.
+  //if (CXXRecordDecl* record = dyn_cast<CXXRecordDecl>(decl))
+    //if (record->getTemplateSpecializationKind() == TSK_ImplicitInstantiation)
+      //return true;
+
+  return false;
+}
+
+void CompletePlugin::HandleTagDeclDefinition(TagDecl *D) {
+return;
+  if (shouldIgnoreDecl(D, instance_)) return;
+  HandleDecl(D);
+
+  for (DeclContext::decl_iterator DI = D->decls_begin(),
+      DIEnd = D->decls_end();
+      DI != DIEnd; ++DI) {
+    if (isa<FunctionDecl>(*DI)) {
+      HandleDecl(*DI);
+    }
+  }
+}
+
 void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
   for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
-    Decl* decl = *I;
-    SourceLocation loc = decl->getLocStart();
-    SourceManager& source_manager = instance_.getSourceManager();
-    loc = source_manager.getInstantiationLoc(loc);
-
-    // Ignore built-ins.
-    if (loc.isInvalid()) return;
-
-    // Ignore stuff from system headers.
-    if (source_manager.isInSystemHeader(loc)) return;
-
-    // Ignore everything not in the main file.
-    //if (!source_manager.isFromMainFile(loc)) return;
-
-    HandleDecl(decl);
+    if (shouldIgnoreDecl(*I, instance_)) return;
+    HandleDecl(*I);
   }
 }
 
@@ -186,7 +242,20 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     // plugin on this file takes 37s and produces 17876 symbols. With this,
     // it takes 27s and produces 13589 symbols. Recursing only into
     // RecordDecls and NamespaceDecls takes 25s and produces 12101 symbols.
-    // Running without the plugin takes 1.6s :-/)
+    // Running without the plugin takes 1.6s :-/ Inserting only TagDecls
+    // takes 3.4s and produces 1047 symbols. Inserting only TagDecls and their
+    // child FunctionDecls by walking all TagDecl children takes 15s and
+    // produces 9714 symbols)
+    //
+    // For the "Only TagDecls and their children case":
+    // * Normal: 15s
+    // * Creating tables only at program start: .5s faster
+    // * FileIdCache in getFileId: .3s faster :-/
+    // * Cache only last file in getFileId: .5s faster
+    // * Tell sqlite to be fast: 12s faster
+    //   (only .3s slower than without plugin)
+    // * Use fast sqlite, collect every symbol except locals: 2s instead if 1.6s
+    // * Use fast sqlite, collect every symbol: 2.2s instead if 1.6s
     if (!isa<FunctionDecl>(DC)) {
       for (DeclContext::decl_iterator DI = DC->decls_begin(),
                                    DIEnd = DC->decls_end();
