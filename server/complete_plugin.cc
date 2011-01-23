@@ -211,14 +211,6 @@ static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
   // Ignore stuff from system headers.
   if (source_manager.isInSystemHeader(loc)) return true;
 
-  // Ignore everything not in the main file.
-  //if (!source_manager.isFromMainFile(loc)) return true;
-
-  // Doesn't actually save run time.
-  //if (CXXRecordDecl* record = dyn_cast<CXXRecordDecl>(decl))
-    //if (record->getTemplateSpecializationKind() == TSK_ImplicitInstantiation)
-      //return true;
-
   return false;
 }
 
@@ -245,28 +237,9 @@ void CompletePlugin::HandleTranslationUnit(ASTContext &Ctx) {
 void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
   // A DeclContext is something that can contain declarations, e.g. a namespace,
   // a class, or a function. Recurse into these for their declarations.
-  // TODO(thakis): Do recurse into objc class definitions.
-  // TODO(thakis): Maybe do not recurse into instantiated templates?
   if (DeclContext* DC = dyn_cast<DeclContext>(decl)) {
     // Do not recurse into functions. Local variables / functions are not
-    // very interesting, and this is slow to do. (Without this, running the
-    // plugin on this file takes 37s and produces 17876 symbols. With this,
-    // it takes 27s and produces 13589 symbols. Recursing only into
-    // RecordDecls and NamespaceDecls takes 25s and produces 12101 symbols.
-    // Running without the plugin takes 1.6s :-/ Inserting only TagDecls
-    // takes 3.4s and produces 1047 symbols. Inserting only TagDecls and their
-    // child FunctionDecls by walking all TagDecl children takes 15s and
-    // produces 9714 symbols)
-    //
-    // For the "Only TagDecls and their children case":
-    // * Normal: 15s
-    // * Creating tables only at program start: .5s faster
-    // * FileIdCache in getFileId: .3s faster :-/
-    // * Cache only last file in getFileId: .5s faster
-    // * Tell sqlite to be fast: 12s faster
-    //   (only .3s slower than without plugin)
-    // * Use fast sqlite, collect every symbol except locals: 2s instead if 1.6s
-    // * Use fast sqlite, collect every symbol: 2.2s instead if 1.6s
+    // very interesting.
     if (!isa<FunctionDecl>(DC)) {
       for (DeclContext::decl_iterator DI = DC->decls_begin(),
                                    DIEnd = DC->decls_end();
@@ -280,7 +253,7 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
     if (!td->isDefinition())
       return;  // Declarations are boring.
 
-  if (isa<UsingShadowDecl>(decl))
+  if (isa<UsingShadowDecl>(decl) || isa<UsingDirectiveDecl>(decl))
     return;
 
   SourceLocation loc = decl->getLocStart();
@@ -332,7 +305,6 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
     // Nonstandard tag kinds for namespaces.
     else if (isa<NamespaceDecl>(named)) kind = 'n';
     else if (isa<UsingDecl>(named)) kind = 'x';
-    else if (isa<UsingDirectiveDecl>(named)) kind = 'y';
     else if (isa<NamespaceAliasDecl>(named)) kind = 'y';
 
     db_.putSymbol(fileId, lineNr, identifier, kind);
