@@ -101,7 +101,7 @@ public:
 
     db_.exec(
         "create table if not exists symbols "
-        "    (fileid integer, linenr integer, symbol, "
+        "    (fileid integer, linenr integer, symbol, kind, "
         "     primary key(fileid, linenr, symbol))");
   }
 
@@ -143,16 +143,16 @@ public:
     return rowid;
   }
 
-  // TODO: kind, maybe function arity,
+  // TODO: maybe function arity,
   // maybe one of class/enum/function/struct/union, maybe file,
   // maybe isDefinition,
   // v2: referencing places (requires "linking")
-  void putSymbol(int fileId, int lineNr, const std::string& symbol) {
+  void putSymbol(int fileId, int lineNr, const std::string& symbol, char kind) {
 
     char* zSQL = sqlite3_mprintf(
-        "insert or replace into symbols (fileid, linenr, symbol) "
-        "                        values (%d, %d, %Q)",
-        fileId, lineNr, symbol.c_str());
+        "insert or replace into symbols (fileid, linenr, symbol, kind) "
+        "                        values (%d, %d, %Q, '%c')",
+        fileId, lineNr, symbol.c_str(), kind);
     db_.exec(zSQL);
     sqlite3_free(zSQL);
   }
@@ -265,6 +265,10 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     }
   }
 
+  if (TagDecl* td = dyn_cast<TagDecl>(decl))
+    if (!td->isDefinition())
+      return;  // Declarations are boring.
+
   SourceLocation loc = decl->getLocStart();
   SourceManager& source_manager = instance_.getSourceManager();
   loc = source_manager.getInstantiationLoc(loc);
@@ -275,7 +279,31 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     std::string filename = source_manager.getBufferName(loc);
     int fileId = db_.getFileId(filename);
     int lineNr = source_manager.getInstantiationLineNumber(loc);
-    db_.putSymbol(fileId, lineNr, identifier);
+
+    char kind = ' ';
+    if (FunctionDecl* fd = dyn_cast<FunctionDecl>(named)) {
+      if (fd->isThisDeclarationADefinition())
+        kind = 'f';
+      else
+        kind = 'p';
+    }
+    else if (isa<CXXRecordDecl>(named)) kind = 'c';
+    else if (isa<RecordDecl>(named)) kind = 's';
+    else if (isa<FieldDecl>(named)) kind = 'm';
+    else if (isa<EnumDecl>(named)) kind = 'g';
+    else if (isa<EnumConstantDecl>(named)) kind = 'e';
+    else if (isa<VarDecl>(named)) kind = 'v';
+    else if (isa<TypedefDecl>(named)) kind = 't';
+    else if (isa<TagDecl>(named)) kind = 'u';
+    else if (isa<FunctionTemplateDecl>(named)) kind = 'f';  // FIXME: 'p'?
+    else if (isa<ClassTemplateDecl>(named)) kind = 'c';
+
+    // Nonstandard
+    else if (isa<NamespaceDecl>(named)) kind = 'n';
+    else if (isa<UsingDecl>(named)) kind = 'x';
+    else if (isa<UsingDirectiveDecl>(named)) kind = 'y';
+
+    db_.putSymbol(fileId, lineNr, identifier, kind);
   }
 }
 
