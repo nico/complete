@@ -122,6 +122,7 @@ public:
     // a single folder).
     // Since realpath() resolves symlinks, it needs to fstat(), which is slow.
     // Hence, this needs to be done after the cache check above.
+    // TODO: clang already knows the complete path, get it from there somehow.
     char abspath[PATH_MAX];
     realpath(file.c_str(), abspath);
 
@@ -314,7 +315,21 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
     }
     else if (isa<ClassTemplateDecl>(named)) kind = 'c';
 
-    // Nonstandard
+    // ObjC
+    // ObjCContainerDecl is the superclass for objc interfaces, implementations,
+    // categories, and protocols. Use 'c' for everything.
+    else if (isa<ObjCContainerDecl>(named)) kind = 'c';
+    else if (isa<ObjCIvarDecl>(named)) kind = 'v';
+    else if (ObjCMethodDecl* om = dyn_cast<ObjCMethodDecl>(named)) {
+      // This handles property declarations as well.
+      if (om->isThisDeclarationADefinition())
+        kind = 'f';
+      else
+        kind = 'p';
+    }
+    // TODO: ObjCPropertyImplDecl (@synthesize) support would be nice.
+
+    // Nonstandard tag kinds for namespaces.
     else if (isa<NamespaceDecl>(named)) kind = 'n';
     else if (isa<UsingDecl>(named)) kind = 'x';
     else if (isa<UsingDirectiveDecl>(named)) kind = 'y';
