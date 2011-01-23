@@ -71,32 +71,12 @@ public:
     return success;
   }
 
-  bool exec(const std::string& query) {
-    if (!db_)
-      return false;
-    return sqlite3_exec(db_, query.c_str(), NULL, NULL, NULL) == SQLITE_OK;
-  }
-
   void close() {
     if (db_) {
       exec("end transaction");
       sqlite3_close(db_);
     }
     db_ = NULL;
-  }
-
-  void prepareTables() {
-    exec("create table if not exists filenames(name, basename)");
-    exec(
-        "create index if not exists filename_name_idx on filenames(name)");
-    exec(
-        "create index if not exists filename_basename_idx "
-        "on filenames(basename)");
-
-    exec(
-        "create table if not exists symbols "
-        "    (fileid integer, linenr integer, symbol, kind, "
-        "     primary key(fileid, linenr, symbol))");
   }
 
   int getFileId(const std::string& file) {
@@ -113,7 +93,6 @@ public:
     char abspath[PATH_MAX];
     realpath(file.c_str(), abspath);
 
-    // FIXME: move sqlite-specific stuff into StupidDatabase
     const char query[] = "select rowid from filenames where name=?";
     sqlite3_stmt* query_stmt = NULL;
     if (sqlite3_prepare_v2(
@@ -163,6 +142,26 @@ public:
   }
 
 private:
+  bool exec(const std::string& query) {
+    if (!db_)
+      return false;
+    return sqlite3_exec(db_, query.c_str(), NULL, NULL, NULL) == SQLITE_OK;
+  }
+
+  void prepareTables() {
+    exec("create table if not exists filenames(name, basename)");
+    exec(
+        "create index if not exists filename_name_idx on filenames(name)");
+    exec(
+        "create index if not exists filename_basename_idx "
+        "on filenames(basename)");
+
+    exec(
+        "create table if not exists symbols "
+        "    (fileid integer, linenr integer, symbol, kind, "
+        "     primary key(fileid, linenr, symbol))");
+  }
+
   sqlite3* db_;
   std::string lastFile_;
   int lastFileId_;
