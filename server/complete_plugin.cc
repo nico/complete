@@ -15,6 +15,11 @@ g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
 
 The database is meant to be converted into this format later on:
 http://ctags.sourceforge.net/FORMAT
+
+  select symbol, name, linenr \
+  from symbols join filenames on symbols.fileid = filenames.rowid \
+  where symbol = 'begin';
+
 */
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
@@ -109,7 +114,8 @@ public:
 
   // TODO: kind, maybe function arity,
   // maybe one of class/enum/function/struct/union, maybe file,
-  // maybe isDefinition
+  // maybe isDefinition,
+  // v2: referencing places (requires "linking")
   void putSymbol(int fileId, int lineNr, const std::string& symbol) {
     db_.exec(
         "create table if not exists symbols "
@@ -141,6 +147,8 @@ public:
 
   virtual void HandleTopLevelDecl(DeclGroupRef D);
 
+  void HandleDecl(Decl* decl);
+
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
@@ -149,28 +157,56 @@ private:
 
 void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
   for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
-    if (NamedDecl* record = dyn_cast<NamedDecl>(*I)) {
-      SourceLocation record_location = record->getLocStart();
-      SourceManager& source_manager = instance_.getSourceManager();
+    Decl* decl = *I;
+    SourceLocation loc = decl->getLocStart();
+    SourceManager& source_manager = instance_.getSourceManager();
+    loc = source_manager.getInstantiationLoc(loc);
 
-      record_location = source_manager.getInstantiationLoc(record_location);
+    // Ignore built-ins.
+    if (loc.isInvalid()) return;
 
-      // Ignore built-ins.
-      if (record_location.isInvalid()) return;
+    // Ignore stuff from system headers.
+    if (source_manager.isInSystemHeader(loc)) return;
 
-      // Ignore stuff from system headers.
-      if (source_manager.isInSystemHeader(record_location)) return;
+    // Ignore everything not in the main file.
+    //if (!source_manager.isFromMainFile(loc)) return;
 
-      // Ignore everything not in the main file.
-      //if (!source_manager.isFromMainFile(record_location)) return;
+    HandleDecl(decl);
+  }
+}
 
-      // TODO: descend into some decls (at least namespaces and classes/structs)
-      std::string identifier = record->getNameAsString();
-      std::string filename = source_manager.getBufferName(record_location);
-      int fileId = db_.getFileId(filename);
-      int lineNr = source_manager.getInstantiationLineNumber(record_location);
-      db_.putSymbol(fileId, lineNr, identifier);
+void CompletePlugin::HandleDecl(Decl* decl) {
+  // A DeclContext is something that can contain declarations, e.g. a namespace,
+  // a class, or a function. Recurse into these for their declarations.
+  // TODO(thakis): Do recurse into objc class definitions.
+  // TODO(thakis): Maybe do not recurse into instantiated templates?
+  if (DeclContext* DC = dyn_cast<DeclContext>(decl)) {
+    // Do not recurse into functions. Local variables / functions are not
+    // very interesting, and this is slow to do. (Without this, running the
+    // plugin on this file takes 37s and produces 17876 symbols. With this,
+    // it takes 27s and produces 13589 symbols. Recursing only into
+    // RecordDecls and NamespaceDecls takes 25s and produces 12101 symbols.
+    // Running without the plugin takes 1.6s :-/)
+    if (!isa<FunctionDecl>(DC)) {
+      for (DeclContext::decl_iterator DI = DC->decls_begin(),
+                                   DIEnd = DC->decls_end();
+           DI != DIEnd; ++DI) {
+        HandleDecl(*DI);
+      }
     }
+  }
+
+  SourceLocation loc = decl->getLocStart();
+  SourceManager& source_manager = instance_.getSourceManager();
+  loc = source_manager.getInstantiationLoc(loc);
+
+  if (NamedDecl* named = dyn_cast<NamedDecl>(decl)) {
+    // TODO: filter out using directives.
+    std::string identifier = named->getNameAsString();
+    std::string filename = source_manager.getBufferName(loc);
+    int fileId = db_.getFileId(filename);
+    int lineNr = source_manager.getInstantiationLineNumber(loc);
+    db_.putSymbol(fileId, lineNr, identifier);
   }
 }
 
