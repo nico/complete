@@ -113,7 +113,17 @@ public:
   }
 
   int getFileId(const std::string& file) {
+    // TODO: should check getcwd() as well.
     if (file == lastFile_) return lastFileId_;
+
+    // Without this, headers "lib/Frontend/../../include/foo.h" and
+    // "lib/Parser/../../include/foo.h" won't resolve to the same file.
+    // For tag files, the filenames need to be absolute, too (or relative to
+    // a single folder).
+    // Since realpath() resolves symlinks, it needs to fstat(), which is slow.
+    // Hence, this needs to be done after the cache check above.
+    char abspath[PATH_MAX];
+    realpath(file.c_str(), abspath);
 
     // FIXME: move sqlite-specific stuff into StupidDatabase
     const char query[] = "select rowid from filenames where name=?";
@@ -122,7 +132,7 @@ public:
           db_.db(), query, -1, &query_stmt, NULL) != SQLITE_OK) {
       return -1;
     }
-    sqlite3_bind_text(query_stmt, 1, file.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(query_stmt, 1, abspath, -1, SQLITE_TRANSIENT);
 
     int rowid = -1;
     int code = sqlite3_step(query_stmt);
@@ -131,7 +141,7 @@ public:
     } else if (code == SQLITE_DONE) {
       char* zSQL = sqlite3_mprintf(
           "insert into filenames (name, basename) values (%Q, %Q)",
-          file.c_str(), "todo");
+          abspath, "todo");
       bool success = db_.exec(zSQL);
       sqlite3_free(zSQL);
 
