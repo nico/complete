@@ -13,7 +13,10 @@ g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
     -Xclang -load -Xclang libcomplete_plugin.dylib \
     -Xclang -add-plugin -Xclang complete
 
-The database is meant to be converted into this format later on:
+time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -pipeline-plugin -Xclang complete' \
+    make  CXX=/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++ -j4
+
+The database is meant to be converted into this format later on (see tags.py):
 http://ctags.sourceforge.net/FORMAT
 
   select symbol, name, linenr
@@ -86,8 +89,6 @@ public:
 
       // Everything in 1 transaction: 14.4s -> 2.6s
       // Make sure only one process accesses the db at a time.
-      // TODO(thakis): Consider opening the db for a short time only during
-      //               HandleTranslationUnit().
       db_.exec("begin exclusive transaction");
     }
     return success;
@@ -175,23 +176,17 @@ public:
   CompletePlugin(CompilerInstance& instance)
       : instance_(instance),
         d_(instance.getDiagnostics()) {
-    // FIXME: Emit diag instead?
-    if (!db_.open(kDbPath))
-      fprintf(stderr, "Failed to open db\n");
   }
 
-  virtual void HandleTagDeclDefinition(TagDecl *D);
   virtual void HandleTopLevelDecl(DeclGroupRef D);
-  virtual void HandleTranslationUnit(ASTContext &Ctx) {
-    db_.flush();
-  }
+  virtual void HandleTranslationUnit(ASTContext &Ctx);
 
-  void HandleDecl(Decl* decl);
+  void HandleDecl(Decl* decl, CompletePluginDB& db);
 
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
-  CompletePluginDB db_;
+  std::vector<DeclGroupRef> declGroups_;
 };
 
 static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
@@ -216,28 +211,27 @@ static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
   return false;
 }
 
-void CompletePlugin::HandleTagDeclDefinition(TagDecl *D) {
-return;
-  if (shouldIgnoreDecl(D, instance_)) return;
-  HandleDecl(D);
+void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
+  declGroups_.push_back(D);
+}
 
-  for (DeclContext::decl_iterator DI = D->decls_begin(),
-      DIEnd = D->decls_end();
-      DI != DIEnd; ++DI) {
-    if (isa<FunctionDecl>(*DI)) {
-      HandleDecl(*DI);
+void CompletePlugin::HandleTranslationUnit(ASTContext &Ctx) {
+  CompletePluginDB db_;
+  // FIXME: Emit diag instead?
+  if (!db_.open(kDbPath))
+    fprintf(stderr, "Failed to open db\n");
+  for (std::vector<DeclGroupRef>::iterator vI = declGroups_.begin(),
+                                           vE = declGroups_.end();
+      vI != vE; ++vI) {
+    for (DeclGroupRef::iterator I = vI->begin(), E = vI->end(); I != E; ++I) {
+      if (shouldIgnoreDecl(*I, instance_)) continue;
+      HandleDecl(*I, db_);
     }
   }
+  db_.flush();
 }
 
-void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
-  for (DeclGroupRef::iterator I = D.begin(), E = D.end(); I != E; ++I) {
-    if (shouldIgnoreDecl(*I, instance_)) return;
-    HandleDecl(*I);
-  }
-}
-
-void CompletePlugin::HandleDecl(Decl* decl) {
+void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
   // A DeclContext is something that can contain declarations, e.g. a namespace,
   // a class, or a function. Recurse into these for their declarations.
   // TODO(thakis): Do recurse into objc class definitions.
@@ -266,7 +260,7 @@ void CompletePlugin::HandleDecl(Decl* decl) {
       for (DeclContext::decl_iterator DI = DC->decls_begin(),
                                    DIEnd = DC->decls_end();
            DI != DIEnd; ++DI) {
-        HandleDecl(*DI);
+        HandleDecl(*DI, db_);
       }
     }
   }
