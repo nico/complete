@@ -34,8 +34,8 @@ using namespace clang;
 #include "sqlite3.h"
 
 // TODO(thakis): Less hardcoded.
-//const char kDbPath[] = "/Users/thakis/src/chrome-git/src/builddb.sqlite";
-const char kDbPath[] = "builddb.sqlite";
+const char kDbPath[] = "/Users/thakis/builddb.sqlite";
+//const char kDbPath[] = "builddb.sqlite";
 
 
 class StupidDatabase {
@@ -72,6 +72,9 @@ public:
   bool open(const std::string& file) {
     bool success = db_.open(file);
     if (success) {
+      // Sleep up to 1200 seconds / 20 minutes on busy.
+      sqlite3_busy_timeout(db_.db(), 100000);
+
       // Putting everything in one transaction is the biggest win. With
       // all these settings, run time goes from 14.4s to 1.9s (compared to
       // 1.6s when running without the plugin).
@@ -82,7 +85,10 @@ public:
       prepareTables();
 
       // Everything in 1 transaction: 14.4s -> 2.6s
-      db_.exec("begin transaction");
+      // Make sure only one process accesses the db at a time.
+      // TODO(thakis): Consider opening the db for a short time only during
+      //               HandleTranslationUnit().
+      db_.exec("begin exclusive transaction");
     }
     return success;
   }
@@ -277,7 +283,6 @@ void CompletePlugin::HandleDecl(Decl* decl) {
   loc = source_manager.getInstantiationLoc(loc);
 
   if (NamedDecl* named = dyn_cast<NamedDecl>(decl)) {
-    // TODO: filter out using directives.
     std::string identifier = named->getNameAsString();
     std::string filename = source_manager.getBufferName(loc);
     int fileId = db_.getFileId(filename);
@@ -300,7 +305,9 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     else if (isa<VarDecl>(named)) kind = 'v';
     else if (isa<TypedefDecl>(named)) kind = 't';
     else if (isa<TagDecl>(named)) kind = 'u';
-    else if (isa<FunctionTemplateDecl>(named)) kind = 'f';  // FIXME: 'p'?
+    else if (isa<FunctionTemplateDecl>(named)) {
+      kind = 'f';  // FIXME: 'p'?
+    }
     else if (isa<ClassTemplateDecl>(named)) kind = 'c';
 
     // Nonstandard
