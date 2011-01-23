@@ -75,7 +75,7 @@ public:
         "on filenames(basename)");
 
     // FIXME: move sqlite-specific stuff into StupidDatabase
-    const char query[] = "select rowid from filenames where name=?"; // % name)
+    const char query[] = "select rowid from filenames where name=?";
     sqlite3_stmt* query_stmt = NULL;
     if (sqlite3_prepare_v2(
           db_.db(), query, -1, &query_stmt, NULL) != SQLITE_OK) {
@@ -88,24 +88,16 @@ public:
     if (code == SQLITE_ROW) {  // FIXME: retry on error etc
       rowid = sqlite3_column_int(query_stmt, 0);
     } else if (code == SQLITE_DONE) {
-      const char insert[] =
-          "insert into filenames (name, basename) values (?, ?)"; // % name)
-      sqlite3_stmt* insert_stmt = NULL;
-      if (sqlite3_prepare_v2(
-            db_.db(), insert, -1, &insert_stmt, NULL) != SQLITE_OK) {
-        // FIXME: leaks
-        return -1;
-      }
-      sqlite3_bind_text(insert_stmt, 1, file.c_str(), -1, SQLITE_TRANSIENT);
-      sqlite3_bind_text(insert_stmt, 2, "todo", -1, SQLITE_TRANSIENT);
+      char* zSQL = sqlite3_mprintf(
+          "insert into filenames (name, basename) values (%Q, %Q)",
+          file.c_str(), "todo");
+      bool success = db_.exec(zSQL);
+      sqlite3_free(zSQL);
 
-      int code = sqlite3_step(insert_stmt);
-      if (code == SQLITE_DONE) {  // FIXME: retry on error etc
+      if (success)  // FIXME: retry on error etc
         rowid = sqlite3_last_insert_rowid(db_.db());
-      } else {
-        fprintf(stderr, "insert error %d\n", code);
-      }
-      sqlite3_finalize(insert_stmt);
+      else
+        fprintf(stderr, "insert error\n");
     } else {
       fprintf(stderr, "query error %d\n", code);
     }
