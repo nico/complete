@@ -20,4 +20,5 @@ if __name__ == '__main__':
         order by symbol
         ''')
     for s, f, n, k in cursor:
-      print '%s\t%s\t%d;"\t%s' % (s, f, n, k)
+      if s:  # don't print anonymous unions etc
+        print '%s\t%s\t%d;"\t%s' % (s, f, n, k)
