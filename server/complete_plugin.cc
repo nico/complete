@@ -269,6 +269,9 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     if (!td->isDefinition())
       return;  // Declarations are boring.
 
+  if (isa<UsingShadowDecl>(decl))
+    return;
+
   SourceLocation loc = decl->getLocStart();
   SourceManager& source_manager = instance_.getSourceManager();
   loc = source_manager.getInstantiationLoc(loc);
@@ -290,6 +293,8 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     else if (isa<CXXRecordDecl>(named)) kind = 'c';
     else if (isa<RecordDecl>(named)) kind = 's';
     else if (isa<FieldDecl>(named)) kind = 'm';
+    // Field of anonymous unions
+    else if (isa<IndirectFieldDecl>(named)) kind = 'm';
     else if (isa<EnumDecl>(named)) kind = 'g';
     else if (isa<EnumConstantDecl>(named)) kind = 'e';
     else if (isa<VarDecl>(named)) kind = 'v';
@@ -302,6 +307,7 @@ void CompletePlugin::HandleDecl(Decl* decl) {
     else if (isa<NamespaceDecl>(named)) kind = 'n';
     else if (isa<UsingDecl>(named)) kind = 'x';
     else if (isa<UsingDirectiveDecl>(named)) kind = 'y';
+    else if (isa<NamespaceAliasDecl>(named)) kind = 'y';
 
     db_.putSymbol(fileId, lineNr, identifier, kind);
   }
