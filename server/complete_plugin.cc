@@ -107,6 +107,21 @@ public:
     return rowid;
   }
 
+  // TODO: kind, maybe function arity,
+  // maybe one of class/enum/function/struct/union, maybe file
+  void putSymbol(int fileId, int lineNr, const std::string& symbol) {
+    db_.exec(
+        "create table if not exists symbols "
+        "    (fileid integer, linenr integer, symbol)");
+
+    // TODO: Don't insert a symbol/file/linenr combination more than once
+    char* zSQL = sqlite3_mprintf(
+        "insert into symbols (fileid, linenr, symbol) values (%d, %d, %Q)",
+        fileId, lineNr, symbol.c_str());
+    db_.exec(zSQL);
+    sqlite3_free(zSQL);
+  }
+
 private:
   StupidDatabase db_;
 };
@@ -147,15 +162,12 @@ void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
       // Ignore everything not in the main file.
       //if (!source_manager.isFromMainFile(record_location)) return;
 
-      //std::string identifier = record->getIdentifier();
+      // TODO: descend into some decls (at least namespaces and classes/structs)
       std::string identifier = record->getNameAsString();
       std::string filename = source_manager.getBufferName(record_location);
       int fileId = db_.getFileId(filename);
-      fprintf(stderr, "%d %s:%u Identifier: %s\n",
-          fileId,
-          filename.c_str(),
-          source_manager.getInstantiationLineNumber(record_location),
-          identifier.c_str());
+      int lineNr = source_manager.getInstantiationLineNumber(record_location);
+      db_.putSymbol(fileId, lineNr, identifier);
     }
   }
 }
