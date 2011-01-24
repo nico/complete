@@ -1,5 +1,10 @@
 /*
+A clang plugin that works like ctags.
 
+Since it uses clang, this plugin supports ObjC (ctags does not), and it produces
+better results in C++ as well.
+
+Build like this:
 g++ -c complete_plugin.cc \
     `~/src/llvm-svn/Release+Asserts/bin/llvm-config --cxxflags` \
     -I/Users/thakis/src/llvm-svn/tools/clang/include
@@ -7,22 +12,20 @@ g++ -c complete_plugin.cc \
 g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
     -lsqlite3 complete_plugin.o -o libcomplete_plugin.dylib
 
+Run it like this:
 ~/src/llvm-svn/Release+Asserts/bin/clang++ -c complete_plugin.cc\
     `~/src/llvm-svn/Release+Asserts/bin/llvm-config --cxxflags` \
     -I/Users/thakis/src/llvm-svn/tools/clang/include \
     -Xclang -load -Xclang libcomplete_plugin.dylib \
     -Xclang -add-plugin -Xclang complete
 
-time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -pipeline-plugin -Xclang complete' \
+Run it on the clang code (~10% slowdown compared to building without plugin):
+time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -add-plugin -Xclang complete' \
     make  CXX=/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++ -j4
 
-The database is meant to be converted into this format later on (see tags.py):
+The database is meant to be converted into the ctags format later on, which
+editors like vim understand (tags.py in this folder does the conversion):
 http://ctags.sourceforge.net/FORMAT
-
-  select symbol, name, linenr
-  from symbols join filenames on symbols.fileid = filenames.rowid
-  where symbol = 'begin';
-
 */
 #include <string>
 
@@ -39,7 +42,6 @@ using namespace clang;
 
 // TODO(thakis): Less hardcoded.
 const char kDbPath[] = "/Users/thakis/builddb.sqlite";
-//const char kDbPath[] = "builddb.sqlite";
 
 
 class CompletePluginDB {
@@ -55,9 +57,10 @@ public:
       // Sleep up to 1200 seconds / 20 minutes on busy.
       sqlite3_busy_timeout(db_, 100000);
 
-      // Putting everything in one transaction is the biggest win. With
-      // all these settings, run time goes from 14.4s to 1.9s (compared to
-      // 1.6s when running without the plugin).
+      // Putting everything in one transaction makes things much faster. Less
+      // robust journalling helps as well. With all these settings, run time
+      // goes from 14.4s to 1.9s on this file (compared to 1.6s when running
+      // without the plugin).
       exec("pragma synchronous = off");  // 14.4s -> 7.6s
       exec("pragma journal_mode = memory");  // 14.4s -> 6.6s
       //exec("pragma journal_mode = off");  // about the same as "memory"
@@ -132,7 +135,6 @@ public:
   // maybe isDefinition,
   // v2: referencing places (requires "linking")
   void putSymbol(int fileId, int lineNr, const std::string& symbol, char kind) {
-
     char* zSQL = sqlite3_mprintf(
         "insert or replace into symbols (fileid, linenr, symbol, kind) "
         "                        values (%d, %d, %Q, '%c')",
@@ -150,16 +152,13 @@ private:
 
   void prepareTables() {
     exec("create table if not exists filenames(name, basename)");
-    exec(
-        "create index if not exists filename_name_idx on filenames(name)");
-    exec(
-        "create index if not exists filename_basename_idx "
-        "on filenames(basename)");
+    exec( "create index if not exists filename_name_idx on filenames(name)");
+    exec("create index if not exists filename_basename_idx "
+         "on filenames(basename)");
 
-    exec(
-        "create table if not exists symbols "
-        "    (fileid integer, linenr integer, symbol, kind, "
-        "     primary key(fileid, linenr, symbol))");
+    exec("create table if not exists symbols "
+         "    (fileid integer, linenr integer, symbol, kind, "
+         "     primary key(fileid, linenr, symbol))");
   }
 
   sqlite3* db_;
