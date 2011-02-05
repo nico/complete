@@ -11,7 +11,7 @@ Use e.g. like this:
       OBJROOT=/Users/$USER/src/chrome-git/src/clang/obj \
       DSTROOT=/Users/$USER/src/chrome-git/src/clang \
       SYMROOT=/Users/$USER/src/chrome-git/src/clang \
-      CC=/Users/thakis/src/chrome-git/src/builddb-cc 
+      CC=/Users/thakis/src/complete/server/builddb-cc 
 
 Uses (some of them easily possible with the make build, but I'm stuck with
 xcodebuild):
@@ -32,8 +32,9 @@ import time
 
 
 # TODO(thakis): Make configurable
-CC = '/Users/thakis/src/llvm-svn/Release+Asserts/bin/clang++'
+CC = '/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++'
 DB = 'builddb.sqlite'  # Relative to source root.
+PLUGIN = '/Users/thakis/src/complete/server/libcomplete_plugin.dylib'
 
 
 def GetSourceRoot():
@@ -56,19 +57,32 @@ def FindInput(args, output):
   for i, arg in enumerate(args):
     if arg.find(output) != -1:
       if args[i - 1] == '-c':
+        # TODO(thakis): This does not always match the path the plugin uses :-/
         return os.path.relpath(os.path.realpath(arg), GetSourceRoot())
       elif os.path.splitext(arg)[1] in ['.c', '.cpp', '.cc', '.m', '.mm']:
         return arg
   return None
 
 
-def GetFileId(db, name):
+def PrepareTables(db):
   db.execute('create table if not exists filenames(name, basename)')
   db.execute(
       'create index if not exists filename_name_idx on filenames(name)')
   db.execute(
       'create index if not exists filename_basename_idx on filenames(basename)')
 
+  db.execute('''
+      create table if not exists gcc_build_commands(
+          filename_input_id integer,
+          cwd,
+          command,
+          output_file_name,
+          exit_code integer,
+          duration real)
+  ''')
+
+
+def GetFileId(db, name):
   cursor = db.execute('select rowid from filenames where name="%s"' % name)
   result = cursor.fetchone()
   if not result:
@@ -81,15 +95,6 @@ def GetFileId(db, name):
 
 
 def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
-  db.execute('''
-      create table if not exists gcc_build_commands(
-          filename_input_id integer,
-          cwd,
-          command,
-          output_file_name,
-          exit_code integer,
-          duration real)
-  ''')
   # TODO(thakis): Make sure no row exists for this output file?
   db.execute('''
       insert into gcc_build_commands(
@@ -109,25 +114,39 @@ def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
        ))
 
 
-def LogInvocation(cmd_list, duration, exit_code):
+def LogInvocation(cmd_list, duration, exit_code, db_path):
   cc_output = FindOutput(cmd_list)
   cc_input = None
   if cc_output:
     cc_input = FindInput(cmd_list, cc_output)
 
-  with sqlite3.connect(os.path.join(GetSourceRoot(), DB)) as db:
+  with sqlite3.connect(db_path, isolation_level=None) as db:
+    db.execute('pragma synchronous = off')
+    db.execute('pragma journal_mode = memory')
+    PrepareTables(db)
+    db.execute('begin exclusive transaction')
     file_id = 0
     if cc_input:
       file_id = GetFileId(db, cc_input)
     LogInvocationToDb(db, cmd_list, duration, exit_code, file_id, cc_output)
+    db.execute('end transaction')
 
 
 if __name__ == '__main__':
   # TODO(thakis): Maybe store svn rev in DB and error out if current revision
   #               doesn't match db revision.
+  db_path = os.path.join(GetSourceRoot(), DB)
   command = [CC] + sys.argv[1:]
+  if PLUGIN:
+    command.extend(['-Xclang', '-load', '-Xclang', PLUGIN,
+                    '-Xclang', '-add-plugin', '-Xclang', 'complete',
+                    '-Xclang', '-plugin-arg-complete',
+                        '-Xclang', '--db=' + db_path,
+                    '-Xclang', '-plugin-arg-complete',
+                        '-Xclang', '--source-root=' + GetSourceRoot()
+                   ])
   time_start = time.time()
   exit_code = subprocess.call(command)
   time_end = time.time()
-  LogInvocation(command, time_end - time_start, exit_code)
+  LogInvocation(command, time_end - time_start, exit_code, db_path)
   sys.exit(exit_code)

@@ -21,13 +21,18 @@ time $LLVM_ROOT/Release+Asserts/bin/clang++ -c complete_plugin.cc \
     -Xclang -add-plugin -Xclang complete \
     -Xclang -plugin-arg-complete -Xclang --db=~/builddb.sqlite
 
+There's an optional source-root parameter;
+    -Xclang -plugin-arg-complete -Xclang --source-root=~/my/project
+It defaults to cwd if omitted.
+
 Run it on the clang code (~10% slowdown compared to building without plugin):
-time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -add-plugin -Xclang complete' \
+time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -add-plugin -Xclang complete -Xclang -plugin-arg-complete -Xclang --db=`pwd`/builddb.sqlite' \
     make  CXX=/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++ -j4
 
 The database is meant to be converted into the ctags format later on, which
-editors like vim understand (tags.py in this folder does the conversion):
-http://ctags.sourceforge.net/FORMAT
+editors like vim understand. tags.py in this folder does the conversion:
+  ./tags.py builddb.sqlite > tags
+The tags file format description is here: http://ctags.sourceforge.net/FORMAT
 */
 #include <string>
 
@@ -83,7 +88,8 @@ public:
   }
 
   int getFileId(const std::string& file, const std::string& source_root) {
-    // TODO: should check getcwd() as well.
+    // TODO: should check getcwd() as well; same filename with a different
+    //       |file| is not a cache hit.
     if (file == lastFile_) return lastFileId_;
 
     // Without this, headers "lib/Frontend/../../include/foo.h" and
