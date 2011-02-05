@@ -82,7 +82,7 @@ public:
     db_ = NULL;
   }
 
-  int getFileId(const std::string& file) {
+  int getFileId(const std::string& file, const std::string& source_root) {
     // TODO: should check getcwd() as well.
     if (file == lastFile_) return lastFileId_;
 
@@ -95,6 +95,9 @@ public:
     // TODO: clang already knows the complete path, get it from there somehow.
     char abspath[PATH_MAX];
     realpath(file.c_str(), abspath);
+    std::string effective_path = abspath;
+    if (effective_path.find(source_root) == 0)
+      effective_path = effective_path.substr(source_root.size());
 
     const char query[] = "select rowid from filenames where name=?";
     sqlite3_stmt* query_stmt = NULL;
@@ -102,7 +105,8 @@ public:
           db_, query, -1, &query_stmt, NULL) != SQLITE_OK) {
       return -1;
     }
-    sqlite3_bind_text(query_stmt, 1, abspath, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(
+        query_stmt, 1, effective_path.c_str(), -1, SQLITE_TRANSIENT);
 
     int rowid = -1;
     int code = sqlite3_step(query_stmt);
@@ -111,7 +115,7 @@ public:
     } else if (code == SQLITE_DONE) {
       char* zSQL = sqlite3_mprintf(
           "insert into filenames (name, basename) values (%Q, %Q)",
-          abspath, "todo");
+          effective_path.c_str(), "todo");
       bool success = exec(zSQL);
       sqlite3_free(zSQL);
 
@@ -175,10 +179,12 @@ static void diagError(const CompilerInstance& CI, const std::string& err) {
 
 class CompletePlugin : public ASTConsumer {
 public:
-  CompletePlugin(CompilerInstance& instance, const std::string& db_path)
+  CompletePlugin(CompilerInstance& instance, const std::string& db_path,
+                 const std::string& source_root)
       : instance_(instance),
         d_(instance.getDiagnostics()),
-        db_path_(db_path) {
+        db_path_(db_path),
+        source_root_(source_root) {
   }
 
   virtual void HandleTopLevelDecl(DeclGroupRef D);
@@ -190,6 +196,7 @@ private:
   CompilerInstance& instance_;
   Diagnostic& d_;
   std::string db_path_;
+  std::string source_root_;
   std::vector<DeclGroupRef> declGroups_;
 };
 
@@ -255,7 +262,7 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
   if (NamedDecl* named = dyn_cast<NamedDecl>(decl)) {
     std::string identifier = named->getNameAsString();
     std::string filename = source_manager.getBufferName(loc);
-    int fileId = db_.getFileId(filename);
+    int fileId = db_.getFileId(filename, source_root_);
     int lineNr = source_manager.getInstantiationLineNumber(loc);
 
     char kind = ' ';
@@ -304,10 +311,20 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
 }
 
 
+static std::string expand(std::string s) {
+  // Expand ~
+  wordexp_t p;
+  if (wordexp(s.c_str(), &p, 0) == 0 && p.we_wordc > 0)
+    s = p.we_wordv[0];
+  wordfree(&p);
+  return s;
+}
+
+
 class CompletePluginAction : public PluginASTAction {
  protected:
   ASTConsumer* CreateASTConsumer(CompilerInstance &CI, llvm::StringRef ref) {
-    return new CompletePlugin(CI, db_path_);
+    return new CompletePlugin(CI, db_path_, source_root_);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
@@ -317,25 +334,30 @@ class CompletePluginAction : public PluginASTAction {
       const std::string& arg = args[i];
 
       std::string db_flag("--db=");
-      if (!arg.compare(0, db_flag.size(), db_flag)) {
-        db_path_ = arg.substr(db_flag.size());
-      }
+      if (!arg.compare(0, db_flag.size(), db_flag))
+        db_path_ = expand(arg.substr(db_flag.size()));
+
+      std::string source_root_flag("--source-root=");
+      if (!arg.compare(0, source_root_flag.size(), source_root_flag))
+        source_root_ = expand(arg.substr(source_root_flag.size()));
     }
 
-    if (db_path_ == "") {
+    if (db_path_ == "")
       diagError(CI, "complete plugin expects '-plugin-arg-complete --db=path'");
-    } else {
-      // Expand ~
-      wordexp_t p;
-      if (wordexp(db_path_.c_str(), &p, 0) == 0 && p.we_wordc > 0)
-        db_path_ = p.we_wordv[0];
-      wordfree(&p);
+
+    if (source_root_ == "") {
+      // TODO(thakis): Does relative to db_path_ make more sense?
+      char* cwd = getcwd(NULL, 0);
+      source_root_ = cwd;
+      source_root_ += "/";
+      free(cwd);
     }
 
     return true;
   }
  private:
   std::string db_path_;
+  std::string source_root_;
 };
 
 
