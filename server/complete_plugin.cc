@@ -5,19 +5,21 @@ Since it uses clang, this plugin supports ObjC (ctags does not), and it produces
 better results in C++ as well.
 
 Build like this:
+export LLVM_ROOT=$HOME/src/llvm-rw
 g++ -c complete_plugin.cc \
-    `~/src/llvm-svn/Release+Asserts/bin/llvm-config --cxxflags` \
-    -I/Users/thakis/src/llvm-svn/tools/clang/include
+    `$LLVM_ROOT/Release+Asserts/bin/llvm-config --cxxflags` \
+    -I$LLVM_ROOT/tools/clang/include
 
 g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
     -lsqlite3 complete_plugin.o -o libcomplete_plugin.dylib
 
 Run it like this:
-~/src/llvm-svn/Release+Asserts/bin/clang++ -c complete_plugin.cc\
-    `~/src/llvm-svn/Release+Asserts/bin/llvm-config --cxxflags` \
-    -I/Users/thakis/src/llvm-svn/tools/clang/include \
+time $LLVM_ROOT/Release+Asserts/bin/clang++ -c complete_plugin.cc \
+    `$LLVM_ROOT/Release+Asserts/bin/llvm-config --cxxflags` \
+    -I$LLVM_ROOT/tools/clang/include \
     -Xclang -load -Xclang libcomplete_plugin.dylib \
-    -Xclang -add-plugin -Xclang complete
+    -Xclang -add-plugin -Xclang complete \
+    -Xclang -plugin-arg-complete -Xclang --db=~/builddb.sqlite
 
 Run it on the clang code (~10% slowdown compared to building without plugin):
 time CXXFLAGS='-Xclang -load -Xclang /Users/thakis/src/complete/server/libcomplete_plugin.dylib -Xclang -add-plugin -Xclang complete' \
@@ -29,6 +31,8 @@ http://ctags.sourceforge.net/FORMAT
 */
 #include <string>
 
+#include <wordexp.h>
+
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/AST.h"
@@ -38,10 +42,6 @@ http://ctags.sourceforge.net/FORMAT
 using namespace clang;
 
 #include "sqlite3.h"
-
-
-// TODO(thakis): Less hardcoded.
-const char kDbPath[] = "/Users/thakis/builddb.sqlite";
 
 
 class CompletePluginDB {
@@ -167,11 +167,18 @@ private:
 };
 
 
+static void diagError(const CompilerInstance& CI, const std::string& err) {
+  Diagnostic &D = CI.getDiagnostics();
+  D.Report(D.getCustomDiagID(Diagnostic::Error, err));
+}
+
+
 class CompletePlugin : public ASTConsumer {
 public:
-  CompletePlugin(CompilerInstance& instance)
+  CompletePlugin(CompilerInstance& instance, const std::string& db_path)
       : instance_(instance),
-        d_(instance.getDiagnostics()) {
+        d_(instance.getDiagnostics()),
+        db_path_(db_path) {
   }
 
   virtual void HandleTopLevelDecl(DeclGroupRef D);
@@ -182,6 +189,7 @@ public:
 private:
   CompilerInstance& instance_;
   Diagnostic& d_;
+  std::string db_path_;
   std::vector<DeclGroupRef> declGroups_;
 };
 
@@ -205,9 +213,8 @@ void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
 
 void CompletePlugin::HandleTranslationUnit(ASTContext &Ctx) {
   CompletePluginDB db_;
-  // FIXME: Emit diag instead?
-  if (!db_.open(kDbPath))
-    fprintf(stderr, "Failed to open db\n");
+  if (!db_.open(db_path_))
+    diagError(instance_, "Failed to open db \"" + db_path_ + "\"");
   for (std::vector<DeclGroupRef>::iterator vI = declGroups_.begin(),
                                            vE = declGroups_.end();
       vI != vE; ++vI) {
@@ -300,13 +307,35 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
 class CompletePluginAction : public PluginASTAction {
  protected:
   ASTConsumer* CreateASTConsumer(CompilerInstance &CI, llvm::StringRef ref) {
-    return new CompletePlugin(CI);
+    return new CompletePlugin(CI, db_path_);
   }
 
   bool ParseArgs(const CompilerInstance &CI,
                  const std::vector<std::string>& args) {
+    for (unsigned i = 0, e = args.size(); i != e; ++i) {
+      // Manual flag parsing. Boo!
+      const std::string& arg = args[i];
+
+      std::string db_flag("--db=");
+      if (!arg.compare(0, db_flag.size(), db_flag)) {
+        db_path_ = arg.substr(db_flag.size());
+      }
+    }
+
+    if (db_path_ == "") {
+      diagError(CI, "complete plugin expects '-plugin-arg-complete --db=path'");
+    } else {
+      // Expand ~
+      wordexp_t p;
+      if (wordexp(db_path_.c_str(), &p, 0) == 0 && p.we_wordc > 0)
+        db_path_ = p.we_wordv[0];
+      wordfree(&p);
+    }
+
     return true;
   }
+ private:
+  std::string db_path_;
 };
 
 
