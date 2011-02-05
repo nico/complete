@@ -5,8 +5,23 @@ about input and output files to a sqlite database. Also stores wall time of the
 real CC invocation.
 
 Use e.g. like this:
+  # Required.
+  export SOURCE_ROOT=$(pwd)
+
+  # Optional, defaults to "clang++'.
+  # If clang++ is not in your $PATH, make this absolute.
+  export CLANG_CC=/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++
+
+  # Optional, defaults to "builddb.sqlite".
+  # If relative, it's relative to $SOURCE_ROOT.
+  export BUILDDB=builddb.sqlite
+
   cd base
+
+  # This tool does not support incremental rebuils, so blow away everything
+  # before you use it:
   rm -rf ../clang && rm ../builddb.sqlite
+
   xcodebuild \
       OBJROOT=/Users/$USER/src/chrome-git/src/clang/obj \
       DSTROOT=/Users/$USER/src/chrome-git/src/clang \
@@ -31,26 +46,14 @@ import sys
 import time
 
 
-# TODO(thakis): Make configurable
-CC = '/Users/thakis/src/llvm-rw/Release+Asserts/bin/clang++'
-DB = 'builddb.sqlite'  # Relative to source root.
-PLUGIN = '/Users/thakis/src/complete/server/libcomplete_plugin.dylib'
-
-
-def GetSourceRoot():
-  # TODO(thakis): Could be smarter.
-  root = '/Users/thakis/src/chrome-git/src'
-  return os.path.realpath(root)
-
-
-def FindOutput(args):
+def FindOutput(args, source_root):
   for i, arg in enumerate(args):
     if arg == '-o' and i + 1 < len(args):
-      return os.path.relpath(os.path.realpath(args[i + 1]), GetSourceRoot())
+      return os.path.relpath(os.path.realpath(args[i + 1]), source_root)
   return None
 
 
-def FindInput(args, output):
+def FindInput(args, output, source_root):
   if not output.endswith('.o'):
     return None
   output = os.path.basename(output)[:-2]  # strip '.o'
@@ -58,7 +61,7 @@ def FindInput(args, output):
     if arg.find(output) != -1:
       if args[i - 1] == '-c':
         # TODO(thakis): This does not always match the path the plugin uses :-/
-        return os.path.relpath(os.path.realpath(arg), GetSourceRoot())
+        return os.path.relpath(os.path.realpath(arg), source_root)
       elif os.path.splitext(arg)[1] in ['.c', '.cpp', '.cc', '.m', '.mm']:
         return arg
   return None
@@ -94,7 +97,8 @@ def GetFileId(db, name):
     return result[0]
 
 
-def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
+def LogInvocationToDb(
+    db, cmd_list, duration, exit_code, in_file_id, cc_output, source_root):
   # TODO(thakis): Make sure no row exists for this output file?
   db.execute('''
       insert into gcc_build_commands(
@@ -106,7 +110,7 @@ def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
           duration)
       values (?, ?, ?, ?, ?, ?)
   ''', (in_file_id,
-        os.path.relpath(os.getcwd(), GetSourceRoot()),
+        os.path.relpath(os.getcwd(), source_root),
         ' '.join([pipes.quote(c) for c in cmd_list]),
         cc_output,
         exit_code,
@@ -114,11 +118,11 @@ def LogInvocationToDb(db, cmd_list, duration, exit_code, in_file_id, cc_output):
        ))
 
 
-def LogInvocation(cmd_list, duration, exit_code, db_path):
-  cc_output = FindOutput(cmd_list)
+def LogInvocation(cmd_list, duration, exit_code, db_path, source_root):
+  cc_output = FindOutput(cmd_list, source_root)
   cc_input = None
   if cc_output:
-    cc_input = FindInput(cmd_list, cc_output)
+    cc_input = FindInput(cmd_list, cc_output, source_root)
 
   with sqlite3.connect(db_path, isolation_level=None) as db:
     db.execute('pragma synchronous = off')
@@ -128,25 +132,59 @@ def LogInvocation(cmd_list, duration, exit_code, db_path):
     file_id = 0
     if cc_input:
       file_id = GetFileId(db, cc_input)
-    LogInvocationToDb(db, cmd_list, duration, exit_code, file_id, cc_output)
+    LogInvocationToDb(
+        db, cmd_list, duration, exit_code, file_id, cc_output, source_root)
     db.execute('end transaction')
 
 
 if __name__ == '__main__':
+  # Find plugin.
+  soname = 'libcomplete_plugin.dylib'  # TODO(thakis): Linux.
+
+  plugin = os.path.join(os.path.dirname(sys.argv[0]), soname)
+  if not os.path.isfile(plugin):
+    print "'%s' does not exist. Please compile it." % plugin
+    sys.exit(1)
+
+  # Parse environment variables.
+  if not 'SOURCE_ROOT' in os.environ:
+    print ('You have to set the environment variable SOURCE_ROOT to the '
+           'root directory of your source code.')
+    sys.exit(1)
+  source_root = os.environ['SOURCE_ROOT']
+  if not os.path.isabs(source_root):
+    print '$SOURCE_ROOT has to be an absolute path'
+    sys.exit(1)
+  source_root = os.path.realpath(source_root)
+  if source_root[-1] != '/':
+    source_root += '/'
+
+  clang = 'clang++'
+  if 'CLANG_CC' in os.environ:
+    clang = os.environ['CLANG_CC']
+
+  db_path = 'builddb.sqlite'
+  if 'BUILDDB' in os.environ:
+    db_path = os.environ['BUILDDB']
+  if not os.path.isabs(db_path):
+    db_path = os.path.join(source_root, db_path)
+  db_path = os.path.realpath(db_path)
+
+  # Call clang.
   # TODO(thakis): Maybe store svn rev in DB and error out if current revision
   #               doesn't match db revision.
-  db_path = os.path.join(GetSourceRoot(), DB)
-  command = [CC] + sys.argv[1:]
-  if PLUGIN:
-    command.extend(['-Xclang', '-load', '-Xclang', PLUGIN,
-                    '-Xclang', '-add-plugin', '-Xclang', 'complete',
-                    '-Xclang', '-plugin-arg-complete',
-                        '-Xclang', '--db=' + db_path,
-                    '-Xclang', '-plugin-arg-complete',
-                        '-Xclang', '--source-root=' + GetSourceRoot()
-                   ])
+  command = [clang] + sys.argv[1:]
+  command.extend(['-Xclang', '-load', '-Xclang', plugin,
+                  '-Xclang', '-add-plugin', '-Xclang', 'complete',
+                  '-Xclang', '-plugin-arg-complete',
+                      '-Xclang', '--db=' + db_path,
+                  '-Xclang', '-plugin-arg-complete',
+                      '-Xclang', '--source-root=' + source_root
+                 ])
   time_start = time.time()
   exit_code = subprocess.call(command)
   time_end = time.time()
-  LogInvocation(command, time_end - time_start, exit_code, db_path)
+
+  # Log results.
+  LogInvocation(command, time_end - time_start, exit_code, db_path, source_root)
   sys.exit(exit_code)
