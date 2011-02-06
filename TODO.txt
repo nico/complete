@@ -1,0 +1,16 @@
+better tags
++ containing method/class
++ columns
+
+add 'included_by' filed ot files table
+
+incremental rebuilds
+
+let symbol server return symbols in addition to file names
+
+better "jump to definition" tool than c-] in vim (which doesn't deambiguate
+same method name based on receiver type)
+
+documentation
++ cronjob
++ clang_complete.vim integration (get changes merged)

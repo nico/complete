@@ -23,10 +23,14 @@ Use e.g. like this:
   rm -rf ../clang && rm ../builddb.sqlite
 
   xcodebuild \
-      OBJROOT=/Users/$USER/src/chrome-git/src/clang/obj \
-      DSTROOT=/Users/$USER/src/chrome-git/src/clang \
-      SYMROOT=/Users/$USER/src/chrome-git/src/clang \
+      OBJROOT=$SOURCE_ROOT/clang/obj \
+      DSTROOT=$SOURCE_ROOT/clang \
+      SYMROOT=$SOURCE_ROOT/clang \
       CC=/Users/thakis/src/complete/server/builddb-cc 
+
+  # Optional: Create a tags file:
+  cd $SOURCE_ROOT
+  /Users/thakis/src/complete/server/tags.py ${BUILDDB:-builddb.sqlite} > tags
 
 Uses (some of them easily possible with the make build, but I'm stuck with
 xcodebuild):
@@ -186,5 +190,6 @@ if __name__ == '__main__':
   time_end = time.time()
 
   # Log results.
-  LogInvocation(command, time_end - time_start, exit_code, db_path, source_root)
+  LogInvocation(
+      sys.argv[1:], time_end - time_start, exit_code, db_path, source_root)
   sys.exit(exit_code)
