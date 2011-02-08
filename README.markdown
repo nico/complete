@@ -13,17 +13,52 @@ with clang, such as:
   [ctags output format](http://ctags.sourceforge.net/FORMAT) and can be used
   by vim and other editors.
 * A web interface to the sqlite database that does filename completion.
+* Hooks to give you correct autocompletion in vim.
 
 
 Some assembly required
 ----------------------
 
-Building this is more complicated than it could be -- follow the
-"Build like this" steps in `server/complete_plugin.cc` and then follow the
-comments at the top of `server/builddb-cc`.
+This assumes you've checked out and built clang.
 
-The tools do not support incremental rebuilding of the database, so you always
-have to do a clean build of your project when you use `builddb-cc` for now.
+1. Build the plugin. On OS X:
+
+        export LLVM_ROOT=$HOME/src/llvm-rw
+        g++ -c complete_plugin.cc \
+            `$LLVM_ROOT/Release+Asserts/bin/llvm-config --cxxflags` \
+            -I$LLVM_ROOT/tools/clang/include
+
+        g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
+            -lsqlite3 complete_plugin.o -o libcomplete_plugin.dylib
+
+2. Build your project with builddb-cc:
+
+        cd myproject
+
+        # Required.
+        export SOURCE_ROOT=$(pwd)
+
+        # Optional, defaults to "clang++'.
+        # If clang++ is not in your $PATH, make this absolute.
+        export CLANG_CC=$LLVM_ROOT/Release+Asserts/bin/clang++
+
+        # Optional, defaults to "builddb.sqlite".
+        # If relative, it's relative to $SOURCE_ROOT.
+        export BUILDDB=builddb.sqlite
+
+        # This tool does not support incremental rebuils, so rebuild all.
+        rm -rf clang/ && rm builddb.sqlite
+
+        xcodebuild \
+            OBJROOT=$SOURCE_ROOT/clang/obj \
+            DSTROOT=$SOURCE_ROOT/clang \
+            SYMROOT=$SOURCE_ROOT/clang \
+            CC=/path/to/complete/server/builddb-cc 
+
+3. If you want, create a tags file:
+
+        cd $SOURCE_ROOT
+        /path/to/complete/server/tags.py ${BUILDDB:-builddb.sqlite} > tags
 
 
 Vim integration
