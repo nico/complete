@@ -31,7 +31,7 @@ This assumes you've checked out and built clang.
         g++ -dynamiclib -Wl,-undefined,dynamic_lookup \
             -lsqlite3 complete_plugin.o -o libcomplete_plugin.dylib
 
-2. Build your project with builddb-cc:
+2. Build your project with builddb-cc to create the database:
 
         cd myproject
 
@@ -55,10 +55,23 @@ This assumes you've checked out and built clang.
             SYMROOT=$SOURCE_ROOT/clang \
             CC=/path/to/complete/server/builddb-cc 
 
-3. If you want, create a tags file:
+Now you can do several things with this database;
+
+* Create a tags file:
 
         cd $SOURCE_ROOT
         /path/to/complete/server/tags.py ${BUILDDB:-builddb.sqlite} > tags
+
+* View it in your browser:
+
+        # Start server
+        cd server
+        python serve_complete.py ~/builddb.sqlite
+
+        # In another terminal, open client
+        cd client
+        java -jar ~/src/closure/plovr.jar build config.js > complete-compiled.js
+        open complete.html
 
 
 Vim integration

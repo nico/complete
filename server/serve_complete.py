@@ -3,9 +3,7 @@ import json
 import os
 import re
 import sqlite3
-
-
-DB = '/Users/thakis/src/chrome-git/src/builddb.sqlite'
+import sys
 
 
 def GroupsToRanges(m):
@@ -108,10 +106,13 @@ def serve_search(environ, start_response):
 
 
 if __name__ == '__main__':
+  if len(sys.argv) < 2:
+    print "Usage: %s database.sqlite" % sys.argv[0]
+
   from wsgiref import simple_server
   global filenames
   # TODO(thakis): Maybe use `git list-files` instead?
-  with sqlite3.connect(DB) as db:
+  with sqlite3.connect(sys.argv[1]) as db:
     cursor = db.execute('''
         select name from filenames
         ''')

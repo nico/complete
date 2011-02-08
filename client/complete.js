@@ -98,7 +98,7 @@ complete.setUp = function() {
   // http://closure-library.googlecode.com/svn/trunk/closure/goog/demos/autocompleterichremote.html
   // (view source; use rich results.)
   // FIXME: be disposable
-  var ac = new goog.ui.AutoComplete.RichRemote('http://hummer.mtv:8080', input);
+  var ac = new goog.ui.AutoComplete.RichRemote('http://localhost:8080', input);
   ac.getRenderer().setUseStandardHighlighting(false);
 
   // FIXME: would be nice to have the box open immediately somehow.

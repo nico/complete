@@ -3,8 +3,8 @@
   "paths": ".",
   "inputs": "complete.js",
   //"externs": ""
-  //"mode": "ADVANCED",
-  "mode": "RAW",
+  "mode": "ADVANCED",
+  //"mode": "RAW",
   //"define": { 
     //// FIXME: These seem to be ignored?
     //"goog.dom.ASSUME_STANDARDS_MODE": true,
