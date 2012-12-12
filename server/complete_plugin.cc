@@ -37,7 +37,8 @@ The tags file format description is here: http://ctags.sourceforge.net/FORMAT
 #include <string>
 
 #include <wordexp.h>
-
+#define __STDC_LIMIT_MACROS
+#define __STDC_CONSTANT_MACROS 
 #include "clang/Frontend/FrontendPluginRegistry.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/AST.h"
@@ -178,8 +179,8 @@ private:
 
 
 static void diagError(const CompilerInstance& CI, const std::string& err) {
-  Diagnostic &D = CI.getDiagnostics();
-  D.Report(D.getCustomDiagID(Diagnostic::Error, err));
+	DiagnosticsEngine &D = CI.getDiagnostics();
+  D.Report(D.getCustomDiagID(DiagnosticsEngine::Error, err));
 }
 
 
@@ -193,14 +194,14 @@ public:
         source_root_(source_root) {
   }
 
-  virtual void HandleTopLevelDecl(DeclGroupRef D);
+  virtual bool HandleTopLevelDecl(DeclGroupRef D);
   virtual void HandleTranslationUnit(ASTContext &Ctx);
 
   void HandleDecl(Decl* decl, CompletePluginDB& db);
 
 private:
   CompilerInstance& instance_;
-  Diagnostic& d_;
+  DiagnosticsEngine& d_;
   std::string db_path_;
   std::string source_root_;
   std::vector<DeclGroupRef> declGroups_;
@@ -209,7 +210,7 @@ private:
 static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
   SourceLocation loc = decl->getLocStart();
   SourceManager& source_manager = instance.getSourceManager();
-  loc = source_manager.getInstantiationLoc(loc);
+  loc = source_manager.getExpansionLoc(loc);
 
   // Ignore built-ins.
   if (loc.isInvalid()) return true;
@@ -220,8 +221,9 @@ static bool shouldIgnoreDecl(Decl* decl, CompilerInstance& instance) {
   return false;
 }
 
-void CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
+bool CompletePlugin::HandleTopLevelDecl(DeclGroupRef D) {
   declGroups_.push_back(D);
+  return true; //Not sure if this is right thing to do.
 }
 
 void CompletePlugin::HandleTranslationUnit(ASTContext &Ctx) {
@@ -255,7 +257,7 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
   }
 
   if (TagDecl* td = dyn_cast<TagDecl>(decl))
-    if (!td->isDefinition())
+    if (!td->isCompleteDefinition())
       return;  // Declarations are boring.
 
   if (isa<UsingShadowDecl>(decl) || isa<UsingDirectiveDecl>(decl))
@@ -263,13 +265,13 @@ void CompletePlugin::HandleDecl(Decl* decl, CompletePluginDB& db_) {
 
   SourceLocation loc = decl->getLocStart();
   SourceManager& source_manager = instance_.getSourceManager();
-  loc = source_manager.getInstantiationLoc(loc);
+  loc = source_manager.getExpansionLoc(loc);
 
   if (NamedDecl* named = dyn_cast<NamedDecl>(decl)) {
     std::string identifier = named->getNameAsString();
     std::string filename = source_manager.getBufferName(loc);
     int fileId = db_.getFileId(filename, source_root_);
-    int lineNr = source_manager.getInstantiationLineNumber(loc);
+    int lineNr = source_manager.getExpansionLineNumber(loc);
 
     char kind = ' ';
     if (FunctionDecl* fd = dyn_cast<FunctionDecl>(named)) {
